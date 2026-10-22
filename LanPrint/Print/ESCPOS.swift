@@ -32,7 +32,7 @@ enum ESCPOS {
             data.append(UInt8((bytesPerRow >> 8) & 0xFF))
             data.append(UInt8(height & 0xFF))
             data.append(UInt8((height >> 8) & 0xFF))
-            data.append(bits)
+            data.append(contentsOf: bits)
             data.append(contentsOf: [0x1B, 0x64, 0x04])          // ESC d 4（走纸 4 行）
         }
 

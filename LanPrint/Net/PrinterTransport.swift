@@ -185,6 +185,9 @@ enum PrintTransport {
                     controlHeader.append(contentsOf: Array(String(control.count).utf8))
                     controlHeader.append(contentsOf: Array(" \(controlName)\n".utf8))
                     try client.send(controlHeader, timeout: 10)
+                    // RFC 1179：文件命令本身有一次 ack，文件内容 + NUL 之后还有一次。
+                    // 少数设备只回后一次，所以命令 ack 用短超时并允许缺失。
+                    try expectAck(client, step: "控制文件命令", timeout: 3, optional: true)
                     try client.send(control, timeout: 10)
                     try client.send(Data([0x00]), timeout: 10)
                     try expectAck(client, step: "控制文件")
@@ -195,6 +198,7 @@ enum PrintTransport {
                     dataHeader.append(contentsOf: Array(String(payload.count).utf8))
                     dataHeader.append(contentsOf: Array(" \(dataName)\n".utf8))
                     try client.send(dataHeader, timeout: 10)
+                    try expectAck(client, step: "数据文件命令", timeout: 3, optional: true)
                     try client.send(payload, timeout: 90) { p in
                         progress(p)
                     }
@@ -212,15 +216,26 @@ enum PrintTransport {
     /// LPD 控制文件只保证 ASCII；把中文等字符替换掉，并限制长度。
     private static func lprJobName(_ raw: String) -> String {
         let ascii = raw.unicodeScalars.map { scalar -> String in
-            (0x20...0x7E).contains(scalar.value) ? String(scalar) : "_"
+            (0x20...0x7E).contains(Int(scalar.value)) ? String(scalar) : "_"
         }.joined()
         let trimmed = ascii.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return "LanPrint" }
         return String(trimmed.prefix(80))
     }
 
-    private static func expectAck(_ client: SocketClient, step: String) throws {
-        let ack = try client.receive(exactly: 1, timeout: 15)
+    private static func expectAck(
+        _ client: SocketClient,
+        step: String,
+        timeout: TimeInterval = 15,
+        optional: Bool = false
+    ) throws {
+        let ack: Data
+        do {
+            ack = try client.receive(exactly: 1, timeout: timeout)
+        } catch let error as SocketError {
+            if case .timeout = error, optional { return }
+            throw error
+        }
         guard let value = ack.first else {
             throw TransportError.lpr("\(step)：没有收到打印机响应")
         }

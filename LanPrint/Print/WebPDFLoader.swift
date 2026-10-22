@@ -160,7 +160,18 @@ final class WebPDFLoader: NSObject, WKNavigationDelegate {
             config.rect = CGRect(x: 0, y: 0, width: width, height: contentHeight)
 
             do {
-                let data = try await web.createPDF(configuration: config)
+                // Xcode 16 SDK 只暴露 completionHandler 版本，这里桥接成 async。
+                let data: Data = try await withCheckedThrowingContinuation {
+                    (continuation: CheckedContinuation<Data, Error>) in
+                    web.createPDF(configuration: config) { result in
+                        switch result {
+                        case .success(let pdf):
+                            continuation.resume(returning: pdf)
+                        case .failure(let error):
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
                 if data.isEmpty {
                     self.complete(.failure(WebLoadError.pdfFailed))
                 } else {

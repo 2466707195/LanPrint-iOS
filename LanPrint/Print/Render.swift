@@ -139,7 +139,7 @@ enum TextLayout {
             framesetter,
             CFRange(location: 0, length: 0),
             nil,
-            CGSize(width: contentWidth, height: CGFloat(maxHeight)),
+            CGSize(width: CGFloat(contentWidth), height: CGFloat(maxHeight)),
             &fit
         )
         let height = min(maxHeight, max(120, Int(ceil(measured.height)) + margin * 2))

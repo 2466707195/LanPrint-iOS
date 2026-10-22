@@ -64,7 +64,7 @@ enum PCLRaster {
         for row in 0..<height {
             data.append(prefixData)
             let start = row * rowBytes
-            data.append(bits[start..<(start + rowBytes)])
+            data.append(contentsOf: bits[start..<(start + rowBytes)])
         }
 
         data.appendASCII("\u{1B}*rB")                            // 结束光栅
