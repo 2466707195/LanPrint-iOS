@@ -633,6 +633,7 @@ struct PrintScreen: View {
                     try? FileManager.default.removeItem(at: oldURL)
                 }
             } catch {
+                photoItem = nil
                 fileError = "读取相册图片失败：\(error.localizedDescription)"
             }
         }
@@ -646,6 +647,7 @@ struct PrintScreen: View {
         photoPreview = nil
         photoInfo = ""
         photoItem = nil
+        fileError = nil
     }
 
     private func importFile(_ url: URL) {
