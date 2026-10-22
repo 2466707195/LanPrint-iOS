@@ -1,0 +1,57 @@
+# =============================================================================
+# 局域网打印 iOS — GitHub Actions 云端构建
+#
+# 没有 Mac 也能编译：GitHub 托管的 macOS runner 会跑完整个流程，
+# 产出未签名 ipa，在 Actions 页面下载 artifact 即可。
+#
+# 使用方法：
+#   1. 把本目录（LanPrintIOS）的内容推到 GitHub 仓库（根目录就是仓库根）
+#   2. 仓库 → Actions → 左侧选 “Build iOS (unsigned ipa)” → Run workflow
+#   3. 构建完成后在 Run 页面底部下载 LanPrint-unsigned-ipa
+#   4. 把 ipa 传到「全能签」重签，再安装到手机
+#
+# 额度：公开仓库免费无限；私有仓库免费版每月 2000 分钟，macOS 按 10 倍折算，
+#       约 200 分钟/月，一次构建约 3~6 分钟，够用。
+# =============================================================================
+name: Build iOS (unsigned ipa)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build unsigned ipa
+    # macOS 14 在 2026-11-02 退役，且 10 月有多次 brownout；
+    # macos-15 自带 Xcode 16.x，工程格式 54 可以直接打开。
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i "iphoneos" || true
+
+      - name: Install XcodeGen (pinned 2.38.0)
+        run: |
+          bash scripts/install-xcodegen.sh
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Build unsigned ipa
+        run: bash scripts/build-unsigned-ipa.sh
+
+      - name: Upload ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanPrint-unsigned-ipa
+          path: |
+            build/LanPrint-unsigned.ipa
+            build/Info.json
+          if-no-files-found: error
+          retention-days: 30
