@@ -79,14 +79,32 @@ final class LANScanner: ObservableObject {
             let found = await withTaskGroup(of: [ScanResult].self, returning: [ScanResult].self) { group in
                 for host in batch {
                     group.addTask {
-                        async let raw = SocketClient.probe(host: host, port: 9100)
+                        // 9100 顺便识别电脑桥接：桥接程序会在连接后主动发一行握手。
+                        async let rawProbe = SocketClient.probeBridge(
+                            host: host,
+                            port: 9100,
+                            connectTimeout: 0.7,
+                            greetingTimeout: 0.8
+                        )
                         async let lpr = SocketClient.probe(host: host, port: 515)
                         async let ipp = SocketClient.probe(host: host, port: 631)
 
-                        let (hasRaw, hasLpr, hasIpp) = await (raw, lpr, ipp)
+                        let raw = await rawProbe
+                        let (hasLpr, hasIpp) = await (lpr, ipp)
+                        let hasRaw = raw.connected
+                        let greeting = raw.greeting ?? ""
+                        let isBridge = greeting.hasPrefix("LPBRIDGE1") || greeting.hasPrefix("LPBRIDGE2")
                         var out: [ScanResult] = []
                         if hasRaw {
-                            out.append(ScanResult(host: host, port: 9100, proto: .raw, detail: "9100 端口开放（RAW）"))
+                            out.append(
+                                ScanResult(
+                                    host: host,
+                                    port: 9100,
+                                    proto: .raw,
+                                    format: isBridge ? .bridge : .pcl,
+                                    detail: isBridge ? "9100 电脑桥接服务" : "9100 端口开放（RAW）"
+                                )
+                            )
                         }
                         if hasLpr {
                             out.append(ScanResult(host: host, port: 515, proto: .lpr, detail: "515 端口开放（LPR）"))

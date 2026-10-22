@@ -12,6 +12,15 @@ enum PrintPipeline {
         log: @escaping (PrintLogEntry.Level, String) -> Void,
         progress: @escaping (Double) -> Void
     ) async throws -> Data {
+        if printer.format == .bridge {
+            return try await buildBridge(
+                printer: printer,
+                source: source,
+                options: options,
+                log: log,
+                progress: progress
+            )
+        }
         if printer.format.isReceipt {
             return try await buildReceipt(
                 printer: printer,
@@ -100,6 +109,89 @@ enum PrintPipeline {
         }
 
         return output
+    }
+
+    // MARK: - 电脑桥接直传
+
+    /// 与 Android 版 `Driver.buildBridge` 相同的 LPBRIDGE2 协议：
+    /// 9 字节魔数 + 份数 + 纸张类型 + 宽高（毫米）+ 每页 JPEG（4 字节长度前缀）+ 4 字节 0。
+    /// 电脑端桥接程序收到后，通过 Windows 打印机驱动按实际纸张打印。
+    private static func buildBridge(
+        printer: PrinterConfig,
+        source: PrintSource,
+        options: PrintOptions,
+        log: @escaping (PrintLogEntry.Level, String) -> Void,
+        progress: @escaping (Double) -> Void
+    ) async throws -> Data {
+        var paper = options.paper
+        if paper.isReceipt {
+            paper = .a4
+            log(.warning, "电脑桥接不支持连续小票纸，已按 A4 排版。")
+        }
+
+        let mm = paper.sizeMM(
+            customWidth: options.customWidthMM,
+            customHeight: options.customHeightMM
+        )
+        let widthMM = max(1, min(2000, Int(mm.width.rounded())))
+        let heightMM = max(1, min(2000, Int(mm.height.rounded())))
+        let copies = max(1, min(options.copies, 20))
+
+        let prepared = try await prepare(
+            source: source,
+            printer: printer,
+            options: options,
+            dpi: 200,
+            log: log
+        )
+        let geometry = PageGeometry(paperMM: mm, dpi: 200)
+        let document = PageDocument(prepared: prepared, geometry: geometry)
+
+        var output = Data()
+        output.appendASCII("LPBRIDGE2")
+        output.appendByte(UInt8(copies))
+        output.appendByte(bridgePaperKind(paper))
+        output.appendByte(UInt8((widthMM >> 8) & 0xFF))
+        output.appendByte(UInt8(widthMM & 0xFF))
+        output.appendByte(UInt8((heightMM >> 8) & 0xFF))
+        output.appendByte(UInt8(heightMM & 0xFF))
+
+        log(.info, "电脑桥接：\(paper.label) · \(widthMM) × \(heightMM) mm · \(copies) 份")
+        if options.copies > 20 {
+            log(.warning, "电脑桥接单次最多 20 份，已按 20 份发送。")
+        }
+
+        let total = max(1, document.pageCount)
+        for index in 0..<document.pageCount {
+            if Task.isCancelled { throw CancellationError() }
+            let image = document.renderPage(index)
+            guard let jpeg = image.jpegData(compressionQuality: 0.88) else {
+                throw PrintSourceError.encodingFailed
+            }
+
+            let count = jpeg.count
+            output.appendByte(UInt8((count >> 24) & 0xFF))
+            output.appendByte(UInt8((count >> 16) & 0xFF))
+            output.appendByte(UInt8((count >> 8) & 0xFF))
+            output.appendByte(UInt8(count & 0xFF))
+            output.append(jpeg)
+
+            log(.info, "桥接第 \(index + 1) 页（\(Format.bytes(count))）")
+            progress(0.08 + 0.48 * Double(index + 1) / Double(total))
+        }
+
+        output.append(contentsOf: [0, 0, 0, 0])
+        log(.success, "桥接数据完成，共 \(document.pageCount) 页 / \(Format.bytes(output.count))")
+        return output
+    }
+
+    private static func bridgePaperKind(_ paper: PaperSize) -> UInt8 {
+        switch paper {
+        case .a4: return 1
+        case .a5: return 2
+        case .letter: return 3
+        default: return 0
+        }
     }
 
     // MARK: - 小票 ESC/POS

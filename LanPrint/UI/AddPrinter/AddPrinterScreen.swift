@@ -100,7 +100,7 @@ struct AddPrinterScreen: View {
 
                 LabeledField(
                     title: "地址 / 主机名",
-                    hint: "可填 192.168.1.20 或 printer.local；直接粘贴 IP:端口 也可以。"
+                    hint: "可填 192.168.1.20 或 printer.local；电脑桥接填那台电脑的 IP。"
                 ) {
                     AuroraTextField(
                         placeholder: "192.168.1.20",
@@ -109,7 +109,10 @@ struct AddPrinterScreen: View {
                     )
                 }
 
-                LabeledField(title: "端口") {
+                LabeledField(
+                    title: "端口",
+                    hint: draft.format == .bridge ? "电脑桥接固定使用 9100。" : nil
+                ) {
                     AuroraTextField(
                         placeholder: "9100",
                         text: $portText,
@@ -125,6 +128,13 @@ struct AddPrinterScreen: View {
                     label: { $0.label },
                     hint: draft.proto.hint
                 )
+
+                if draft.format == .bridge {
+                    InfoRow(
+                        systemIcon: "desktopcomputer",
+                        text: "电脑桥接：先在电脑上运行桥接程序，这里填电脑 IP，端口 9100。手机和电脑要在同一局域网。"
+                    )
+                }
             }
         }
     }
@@ -144,6 +154,13 @@ struct AddPrinterScreen: View {
                     label: { $0.label },
                     hint: draft.format.hint
                 )
+
+                if draft.format == .bridge {
+                    InfoRow(
+                        systemIcon: "checkmark.seal",
+                        text: "电脑桥接支持 A5 / 自定义纸张；电脑端桥接程序负责调用 Windows 里安装的打印机。"
+                    )
+                }
 
                 if !draft.format.isReceipt {
                     MenuField(
@@ -304,6 +321,10 @@ struct AddPrinterScreen: View {
         Binding(
             get: { draft.proto },
             set: { newValue in
+                // 电脑桥接只适用于 RAW；切到 LPR / IPP 时先退回 PCL。
+                if newValue != .raw && draft.format == .bridge {
+                    draft.format = .pcl
+                }
                 let oldDefault = draft.proto.defaultPort
                 draft.proto = newValue
                 if draft.port == oldDefault || draft.port == 0 {
@@ -320,6 +341,11 @@ struct AddPrinterScreen: View {
             get: { draft.format },
             set: { newValue in
                 draft.format = newValue
+                if newValue == .bridge {
+                    draft.proto = .raw
+                    draft.port = 9100
+                    portText = "9100"
+                }
                 if !newValue.isReceipt && draft.paper.isReceipt {
                     draft.paper = .a4
                 }
@@ -339,7 +365,17 @@ struct AddPrinterScreen: View {
         Task { @MainActor in
             let result = await PrintTransport.test(snapshot)
             testing = false
-            testResult = result
+
+            if result.detail.contains("探测到电脑桥接") && draft.format != .bridge {
+                draft.format = .bridge
+                draft.proto = .raw
+                draft.port = 9100
+                portText = "9100"
+                draft.normalizeFormat()
+                testResult = (result.ok, "已检测到电脑桥接，并自动切换为「电脑桥接直传」。")
+            } else {
+                testResult = result
+            }
         }
     }
 

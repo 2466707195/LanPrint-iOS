@@ -51,7 +51,10 @@ enum PrinterProtocol: String, CaseIterable, Identifiable, Codable, Hashable {
     /// 该协议可用的输出格式。
     var supportedFormats: [PrintFormat] {
         switch self {
-        case .raw, .lpr:
+        case .raw:
+            // 电脑桥接只能走 RAW 9100，且必须由电脑端桥接程序转发。
+            return [.pcl, .bridge, .esc58, .esc80]
+        case .lpr:
             return [.pcl, .esc58, .esc80]
         case .ipp:
             return [.pcl, .pdf]
@@ -66,6 +69,7 @@ enum PrintFormat: String, CaseIterable, Identifiable, Codable, Hashable {
     case pdf
     case esc58
     case esc80
+    case bridge
 
     var id: String { rawValue }
 
@@ -75,6 +79,7 @@ enum PrintFormat: String, CaseIterable, Identifiable, Codable, Hashable {
         case .pdf: return "PDF"
         case .esc58: return "小票 58mm"
         case .esc80: return "小票 80mm"
+        case .bridge: return "电脑桥接"
         }
     }
 
@@ -84,6 +89,7 @@ enum PrintFormat: String, CaseIterable, Identifiable, Codable, Hashable {
         case .pdf: return "PDF 直传（IPP 彩色 / 软件 RIP）"
         case .esc58: return "ESC/POS 热敏小票 58mm"
         case .esc80: return "ESC/POS 热敏小票 80mm"
+        case .bridge: return "电脑桥接直传（打印电脑上安装的任意打印机）"
         }
     }
 
@@ -97,6 +103,8 @@ enum PrintFormat: String, CaseIterable, Identifiable, Codable, Hashable {
             return "按 58mm 热敏小票机输出（384 点宽），内容自动缩放到纸宽。"
         case .esc80:
             return "按 80mm 热敏小票机输出（576 点宽），内容自动缩放到纸宽。"
+        case .bridge:
+            return "先把电脑上的桥接程序打开，再连接电脑 IP 的 9100 端口；可打印电脑上安装的任意打印机（包括 GDI 打印机）。"
         }
     }
 
@@ -107,7 +115,7 @@ enum PrintFormat: String, CaseIterable, Identifiable, Codable, Hashable {
         switch self {
         case .pcl: return "application/vnd.hp-PCL"
         case .pdf: return "application/pdf"
-        case .esc58, .esc80: return "application/octet-stream"
+        case .esc58, .esc80, .bridge: return "application/octet-stream"
         }
     }
 }
@@ -197,9 +205,22 @@ struct PrinterConfig: Identifiable, Codable, Equatable {
         paper.sizeMM(customWidth: customWidthMM, customHeight: customHeightMM)
     }
 
+    /// 首页卡片、打印页上展示的「连接方式」。
+    var connectionLabel: String {
+        format == .bridge ? "电脑桥接" : "Wi-Fi 局域网直连"
+    }
+
+    var connectionIcon: String {
+        format == .bridge ? "desktopcomputer" : "wifi"
+    }
+
     /// 保留协议支持的格式；协议变更后调用，避免出现 RAW + PDF 这种组合。
     mutating func normalizeFormat() {
-        if !proto.supportedFormats.contains(format) {
+        // 电脑桥接固定走 RAW 9100；选择桥接后不再允许 LPR / IPP。
+        if format == .bridge {
+            proto = .raw
+            port = 9100
+        } else if !proto.supportedFormats.contains(format) {
             format = proto.supportedFormats.first ?? .pcl
         }
         if !format.isReceipt && paper.isReceipt {
@@ -255,9 +276,11 @@ struct ScanResult: Identifiable, Hashable {
     let host: String
     let port: Int
     var proto: PrinterProtocol
+    var format: PrintFormat = .pcl
     var detail: String
 
     var id: String { "\(host):\(port)" }
+    var isBridge: Bool { format == .bridge }
 }
 
 // MARK: - 打印日志

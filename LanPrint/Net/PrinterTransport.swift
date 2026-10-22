@@ -10,6 +10,7 @@ enum TransportError: LocalizedError {
     case lpr(String)
     case network(String)
     case emptyPayload
+    case bridgeMismatch
 
     var errorDescription: String? {
         switch self {
@@ -27,6 +28,8 @@ enum TransportError: LocalizedError {
             return text
         case .emptyPayload:
             return "没有可发送的打印数据"
+        case .bridgeMismatch:
+            return "这个 9100 端口是电脑桥接服务，不是直连打印机。请编辑打印机，把格式改成「电脑桥接直传」后重试。"
         }
     }
 
@@ -62,7 +65,45 @@ enum PrintTransport {
         guard !printer.host.isEmpty else {
             return (false, "请先填写打印机地址")
         }
+
+        if printer.format == .bridge && printer.port != 9100 {
+            return (false, "电脑桥接必须连接电脑的 9100 端口，请把端口改成 9100。")
+        }
+
         let start = Date()
+
+        // 9100 端口顺带识别电脑桥接程序：它会先发一行 LPBRIDGE1 ... 握手信息。
+        if printer.port == 9100 {
+            let probe = await SocketClient.probeBridge(
+                host: printer.host,
+                port: printer.port,
+                connectTimeout: 5,
+                greetingTimeout: 1.2
+            )
+            let ms = max(1, Int(Date().timeIntervalSince(start) * 1000))
+            guard probe.connected else {
+                return (false, "无法连接 \(printer.endpoint)，请检查打印机电源、IP 和端口")
+            }
+
+            let greeting = probe.greeting ?? ""
+            let isBridge = greeting.hasPrefix("LPBRIDGE1") || greeting.hasPrefix("LPBRIDGE2")
+
+            if printer.format == .bridge {
+                if isBridge {
+                    let v2 = greeting.uppercased().contains("V2")
+                    let suffix = v2 ? " · 支持 A5 / 自定义纸张" : " · 旧版桥接，按电脑默认纸张"
+                    return (true, "电脑桥接正常 · \(ms) ms\(suffix)")
+                }
+                return (false, "端口通，但没有收到桥接程序的握手信息。请确认电脑上的桥接程序已启动，且连接的是那台电脑的 IP。")
+            }
+
+            if isBridge {
+                return (true, "端口通（探测到电脑桥接）· \(ms) ms。当前格式不是「电脑桥接」，请编辑打印机改格式后打印。")
+            }
+
+            return (true, "连接成功 · \(printer.endpoint) · \(ms) ms")
+        }
+
         let ok = await SocketClient.probe(host: printer.host, port: printer.port, timeout: 5)
         let ms = max(1, Int(Date().timeIntervalSince(start) * 1000))
         if ok {
@@ -123,6 +164,42 @@ enum PrintTransport {
                 do {
                     log(.info, "正在连接 \(printer.endpoint)…")
                     try client.connect(host: printer.host, port: printer.port, timeout: 6)
+
+                    if printer.format == .bridge {
+                        var outgoing = payload
+                        let greeting = client.receiveGreeting(timeout: 1.8)
+                        if let greeting, greeting.uppercased().contains("V2") {
+                            log(.success, "电脑端桥接已就绪（支持 A5 / 自定义纸张）")
+                        } else {
+                            outgoing = bridgeDowngrade(payload)
+                            if greeting?.hasPrefix("LPBRIDGE") == true {
+                                log(.warning, "电脑端桥接为旧版：本次按电脑默认纸张打印。")
+                            } else {
+                                log(.warning, "没有收到桥接程序的握手信息，仍尝试按旧版协议发送。")
+                            }
+                        }
+
+                        log(.info, "开始发送电脑桥接数据 \(Format.bytes(outgoing.count))")
+                        try client.send(outgoing, timeout: 90) { p in
+                            progress(p)
+                        }
+
+                        // 有的桥接程序会在接收完后回一行状态；没有也不影响。
+                        if let reply = client.receiveGreeting(timeout: 1.0), !reply.isEmpty {
+                            log(.info, "电脑桥接返回：\(reply)")
+                        }
+                        log(.success, "电脑桥接数据发送完成")
+                        continuation.resume()
+                        return
+                    }
+
+                    // 直连 RAW 时先听一下握手：避免把 PCL 数据发给电脑桥接程序，
+                    // 最后只得到一个难以理解的 Broken pipe。
+                    if let greeting = client.receiveGreeting(timeout: 0.8),
+                       greeting.hasPrefix("LPBRIDGE1") || greeting.hasPrefix("LPBRIDGE2") {
+                        throw TransportError.bridgeMismatch
+                    }
+
                     log(.success, "已连接 RAW 端口，开始发送 \(Format.bytes(payload.count))")
                     try client.send(payload, timeout: 90) { p in
                         progress(p)
@@ -134,6 +211,15 @@ enum PrintTransport {
                 }
             }
         }
+    }
+
+    /// LPBRIDGE2 -> LPBRIDGE1：旧版电脑桥接不支持纸张描述，只保留份数。
+    private static func bridgeDowngrade(_ v2: Data) -> Data {
+        guard v2.count >= 15 else { return v2 }
+        var out = v2
+        out[8] = 0x31 // '1'
+        out.removeSubrange(10..<15) // 去掉纸张类型 + 宽高（保留第 9 字节份数）
+        return out
     }
 
     // MARK: LPR / LPD 515

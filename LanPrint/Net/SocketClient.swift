@@ -25,7 +25,7 @@ enum SocketError: LocalizedError {
         case .receiveFailed(let reason):
             return "接收失败：\(reason)"
         case .closed:
-            return "连接被打印机关闭"
+            return "连接被打印机关闭（可能不支持当前格式，或这是电脑桥接端口）"
         case .cancelled:
             return "已取消"
         }
@@ -174,6 +174,45 @@ final class SocketClient {
         return output
     }
 
+    // MARK: 桥接握手
+
+    /// 连接后短暂等待电脑桥接程序主动发来的握手行（LPBRIDGE1 ...）。
+    /// 没有握手时返回 nil，不会把超时当成错误。
+    func receiveGreeting(timeout: TimeInterval = 1.5) -> String? {
+        guard fd >= 0 else { return nil }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var bytes: [UInt8] = []
+
+        while bytes.count < 128 {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 { break }
+
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let wait = poll(&pfd, nfds_t(1), Int32(max(0.02, remaining) * 1000))
+            if wait <= 0 { break }
+
+            var byte: UInt8 = 0
+            let read = Darwin.recv(fd, &byte, 1, 0)
+            if read > 0 {
+                bytes.append(byte)
+                if byte == 0x0A { break }
+            } else if read == 0 {
+                break
+            } else if errno == EINTR {
+                continue
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                continue
+            } else {
+                break
+            }
+        }
+
+        guard !bytes.isEmpty else { return nil }
+        let text = String(bytes: bytes, encoding: .ascii) ?? String(decoding: bytes, as: UTF8.self)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: 关闭
 
     func close() {
@@ -205,7 +244,9 @@ final class SocketClient {
         case ETIMEDOUT:
             return "连接超时"
         case ECONNRESET:
-            return "连接被打印机重置"
+            return "连接被打印机重置（可能不支持当前格式，或这是电脑桥接端口）"
+        case EPIPE:
+            return "打印机关闭了连接（可能不支持当前格式，或这是电脑桥接端口）"
         case EADDRNOTAVAIL:
             return "地址不可用"
         default:
@@ -226,6 +267,34 @@ final class SocketClient {
                     continuation.resume(returning: true)
                 } catch {
                     continuation.resume(returning: false)
+                }
+            }
+        }
+    }
+
+    struct BridgeProbe {
+        let connected: Bool
+        let greeting: String?
+    }
+
+    /// 连接 9100 并读取电脑桥接程序发来的握手信息。
+    static func probeBridge(
+        host: String,
+        port: Int,
+        connectTimeout: TimeInterval = 3,
+        greetingTimeout: TimeInterval = 1.2
+    ) async -> BridgeProbe {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let client = SocketClient()
+                do {
+                    try client.connect(host: host, port: port, timeout: connectTimeout)
+                    let greeting = client.receiveGreeting(timeout: greetingTimeout)
+                    client.close()
+                    continuation.resume(returning: BridgeProbe(connected: true, greeting: greeting))
+                } catch {
+                    client.close()
+                    continuation.resume(returning: BridgeProbe(connected: false, greeting: nil))
                 }
             }
         }

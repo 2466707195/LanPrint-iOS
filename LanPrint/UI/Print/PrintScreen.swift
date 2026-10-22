@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct PrintScreen: View {
@@ -13,6 +15,10 @@ struct PrintScreen: View {
     @State private var tab: SourceTab = .test
     @State private var selectedFile: URL?
     @State private var fileSizeText = ""
+    @State private var photoItem: PhotosPickerItem?
+    @State private var photoURL: URL?
+    @State private var photoPreview: UIImage?
+    @State private var photoInfo = ""
     @State private var webURL = ""
     @State private var widthText: String
     @State private var heightText: String
@@ -64,6 +70,9 @@ struct PrintScreen: View {
         .onChange(of: heightText) { value in
             if let height = Double(value) { options.customHeightMM = height }
         }
+        .onChange(of: photoItem) { item in
+            loadPhoto(item)
+        }
     }
 
     // MARK: - 内容
@@ -102,6 +111,14 @@ struct PrintScreen: View {
                         .font(AuroraFont.bodySmall)
                         .foregroundStyle(Aurora.inkSoft)
                         .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Image(systemName: config.connectionIcon)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("连接方式：\(config.connectionLabel)")
+                            .font(AuroraFont.labelSmall)
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Aurora.muted)
                 }
 
                 Spacer(minLength: 4)
@@ -117,7 +134,10 @@ struct PrintScreen: View {
 
             HStack(spacing: 6) {
                 StatusPill(text: config.proto.shortLabel, color: Aurora.brand)
-                StatusPill(text: config.format.shortLabel, color: Aurora.teal)
+                StatusPill(
+                    text: config.format.shortLabel,
+                    color: config.format == .bridge ? Aurora.rose : Aurora.teal
+                )
                 StatusPill(text: paperLabel, color: Aurora.muted)
             }
             .padding(.top, 10)
@@ -158,6 +178,9 @@ struct PrintScreen: View {
 
             case .file:
                 fileSection
+
+            case .photo:
+                photoSection
 
             case .web:
                 VStack(alignment: .leading, spacing: 10) {
@@ -236,6 +259,84 @@ struct PrintScreen: View {
         }
     }
 
+    @ViewBuilder
+    private var photoSection: some View {
+        if let photoURL, let photoPreview {
+            HStack(spacing: 12) {
+                Image(uiImage: photoPreview)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(photoURL.lastPathComponent)
+                        .font(AuroraFont.titleSmall)
+                        .foregroundStyle(Aurora.ink)
+                        .lineLimit(1)
+                    Text(photoInfo.isEmpty ? "相册图片" : photoInfo)
+                        .font(AuroraFont.bodySmall)
+                        .foregroundStyle(Aurora.inkSoft)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                Button {
+                    clearPhoto()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 19))
+                        .foregroundStyle(Aurora.muted)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 10)
+
+            photoPickerButton(title: "重新选择图片")
+
+            InfoRow(
+                systemIcon: "lock.shield",
+                text: "照片只在本机读取和排版，不会上传；打印时会按所选纸张自动缩放。"
+            )
+            .padding(.top, 10)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                photoPickerButton(title: "从相册选择图片")
+
+                InfoRow(
+                    systemIcon: "photo.on.rectangle.angled",
+                    text: "直接从系统相册选择 PNG / JPG / HEIC，按图片原始比例排版。"
+                )
+                InfoRow(
+                    systemIcon: "lock.shield",
+                    text: "照片只在本机读取和排版，不会上传到云端。"
+                )
+            }
+        }
+    }
+
+    private func photoPickerButton(title: String) -> some View {
+        PhotosPicker(
+            selection: $photoItem,
+            matching: .images,
+            photoLibrary: .shared()
+        ) {
+            HStack(spacing: 8) {
+                Image(systemName: "photo.on.rectangle")
+                    .font(.system(size: 16, weight: .semibold))
+                Text(title)
+                    .font(AuroraFont.labelLarge)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: AuroraMetrics.primaryButtonHeight)
+            .foregroundStyle(Aurora.onBrandContainer)
+            .background(AuroraShape.button.fill(Aurora.brandContainer))
+        }
+        .buttonStyle(.plain)
+    }
+
     private var settingsCard: some View {
         SectionCard {
             Text("打印设置")
@@ -251,6 +352,13 @@ struct PrintScreen: View {
                     label: { $0.label },
                     hint: config.format.hint
                 )
+
+                if config.format == .bridge {
+                    InfoRow(
+                        systemIcon: "desktopcomputer",
+                        text: "电脑桥接会调用电脑上安装的打印机；请确认电脑端桥接程序已启动，并填那台电脑的 IP。"
+                    )
+                }
 
                 if config.format.isReceipt {
                     HStack {
@@ -300,7 +408,7 @@ struct PrintScreen: View {
                         Text("份数")
                             .font(AuroraFont.labelMedium)
                             .foregroundStyle(Aurora.inkSoft)
-                        Text("最多 99 份")
+                        Text(config.format == .bridge ? "电脑桥接最多 20 份" : "最多 99 份")
                             .font(AuroraFont.labelSmall)
                             .foregroundStyle(Aurora.muted)
                     }
@@ -429,6 +537,10 @@ struct PrintScreen: View {
             get: { config.format },
             set: { newValue in
                 config.format = newValue
+                if newValue == .bridge {
+                    config.proto = .raw
+                    config.port = 9100
+                }
                 if !newValue.isReceipt && options.paper.isReceipt {
                     options.paper = .a4
                 }
@@ -446,6 +558,8 @@ struct PrintScreen: View {
             return .test
         case .file:
             return selectedFile.map { .file($0) }
+        case .photo:
+            return photoURL.map { .file($0) }
         case .web:
             let trimmed = webURL.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : .web(trimmed)
@@ -475,9 +589,63 @@ struct PrintScreen: View {
             let result = await PrintTransport.test(snapshot)
             testing = false
             testOK = result.ok
-            testDetail = result.detail
-            store.markTest(id: config.id, ok: result.ok, detail: result.detail)
+            var detail = result.detail
+
+            if result.detail.contains("探测到电脑桥接") && config.format != .bridge {
+                config.format = .bridge
+                config.proto = .raw
+                config.port = 9100
+                store.update(config)
+                detail = "检测到电脑桥接，已自动切换为「电脑桥接直传」。"
+            }
+
+            testDetail = detail
+            store.markTest(id: config.id, ok: result.ok, detail: detail)
         }
+    }
+
+    private func loadPhoto(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+
+        Task { @MainActor in
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    throw PrintSourceError.badImage
+                }
+                guard let image = UIImage(data: data) else {
+                    throw PrintSourceError.badImage
+                }
+
+                let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                let destination = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("lanprint-photo-\(UUID().uuidString).\(ext)")
+                try data.write(to: destination, options: .atomic)
+
+                let oldURL = photoURL
+                photoURL = destination
+                photoPreview = image
+                let pixelWidth = Int(image.size.width * image.scale)
+                let pixelHeight = Int(image.size.height * image.scale)
+                photoInfo = "\(pixelWidth) × \(pixelHeight) · \(Format.bytes(data.count))"
+                fileError = nil
+
+                if let oldURL, oldURL != destination {
+                    try? FileManager.default.removeItem(at: oldURL)
+                }
+            } catch {
+                fileError = "读取相册图片失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func clearPhoto() {
+        if let photoURL {
+            try? FileManager.default.removeItem(at: photoURL)
+        }
+        photoURL = nil
+        photoPreview = nil
+        photoInfo = ""
+        photoItem = nil
     }
 
     private func importFile(_ url: URL) {
@@ -556,12 +724,14 @@ struct PrintScreen: View {
     private enum SourceTab: String, CaseIterable, Hashable {
         case test
         case file
+        case photo
         case web
 
         var label: String {
             switch self {
             case .test: return "测试页"
             case .file: return "文件"
+            case .photo: return "图片"
             case .web: return "网页"
             }
         }

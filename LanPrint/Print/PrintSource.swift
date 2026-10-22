@@ -40,6 +40,7 @@ enum PrintSourceError: LocalizedError {
     case badImage
     case badText
     case emptyText
+    case encodingFailed
 
     var errorDescription: String? {
         switch self {
@@ -55,6 +56,8 @@ enum PrintSourceError: LocalizedError {
             return "文本编码无法识别"
         case .emptyText:
             return "文本内容为空"
+        case .encodingFailed:
+            return "打印数据生成失败（图片编码失败）"
         }
     }
 }

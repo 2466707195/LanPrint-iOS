@@ -183,9 +183,21 @@ struct HomeScreen: View {
                         .foregroundStyle(Aurora.inkSoft)
                         .lineLimit(1)
 
+                    HStack(spacing: 4) {
+                        Image(systemName: printer.connectionIcon)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("连接方式：\(printer.connectionLabel)")
+                            .font(AuroraFont.labelSmall)
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Aurora.muted)
+
                     HStack(spacing: 6) {
                         StatusPill(text: printer.proto.shortLabel, color: Aurora.brand)
-                        StatusPill(text: printer.format.shortLabel, color: Aurora.teal)
+                        StatusPill(
+                            text: printer.format.shortLabel,
+                            color: printer.format == .bridge ? Aurora.rose : Aurora.teal
+                        )
                         StatusPill(text: paperLabel(printer), color: Aurora.muted)
                     }
                     .padding(.top, 1)
@@ -317,15 +329,30 @@ struct HomeScreen: View {
 
         Task { @MainActor in
             let result = await PrintTransport.test(printer)
-            store.markTest(id: printer.id, ok: result.ok, detail: result.detail)
+            var detail = result.detail
+
+            if result.detail.contains("探测到电脑桥接") && printer.format != .bridge {
+                var updated = printer
+                updated.format = .bridge
+                updated.proto = .raw
+                updated.port = 9100
+                store.update(updated)
+                detail = "检测到电脑桥接，已自动切换为「电脑桥接直传」。"
+            }
+
+            store.markTest(id: printer.id, ok: result.ok, detail: detail)
             testingID = nil
-            showToast(result.detail)
+            showToast(detail)
         }
     }
 
     private func pickScan(_ result: ScanResult) {
         showScan = false
-        openEditorAfterScan(.add(PrinterConfig.make(protocol: result.proto, host: result.host)))
+        var printer = PrinterConfig.make(protocol: result.proto, host: result.host)
+        printer.port = result.port
+        printer.format = result.format
+        printer.normalizeFormat()
+        openEditorAfterScan(.add(printer))
     }
 
     private func openEditorAfterScan(_ mode: EditorMode) {

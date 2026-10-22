@@ -175,12 +175,12 @@ struct ScanScreen: View {
     private func resultRow(_ result: ScanResult) -> some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(tone(result.proto).tint(0.13))
+                .fill(resultTone(result).tint(0.13))
                 .frame(width: 42, height: 42)
                 .overlay(
-                    Image(systemName: "printer.fill")
+                    Image(systemName: result.isBridge ? "desktopcomputer" : "printer.fill")
                         .font(.system(size: 18, weight: .regular))
-                        .foregroundStyle(tone(result.proto))
+                        .foregroundStyle(resultTone(result))
                 )
 
             VStack(alignment: .leading, spacing: 3) {
@@ -188,8 +188,11 @@ struct ScanScreen: View {
                     .font(AuroraFont.titleMedium)
                     .foregroundStyle(Aurora.ink)
                 HStack(spacing: 6) {
-                    StatusPill(text: result.proto.shortLabel, color: tone(result.proto))
-                    Text("端口 \(result.port)")
+                    StatusPill(
+                        text: result.isBridge ? "电脑桥接" : result.proto.shortLabel,
+                        color: resultTone(result)
+                    )
+                    Text(result.isBridge ? "端口 9100 · 桥接服务" : "端口 \(result.port)")
                         .font(AuroraFont.labelSmall)
                         .foregroundStyle(Aurora.muted)
                 }
@@ -197,7 +200,7 @@ struct ScanScreen: View {
 
             Spacer(minLength: 4)
 
-            SmallTonalButton(text: "添加", systemIcon: "plus", expands: false) {
+            SmallTonalButton(text: "添加", expands: false) {
                 onPick(result)
             }
         }
@@ -240,6 +243,11 @@ struct ScanScreen: View {
         }
         .padding(.horizontal, AuroraMetrics.pagePadding)
         .padding(.bottom, 10)
+    }
+
+    private func resultTone(_ result: ScanResult) -> Color {
+        if result.isBridge { return Aurora.rose }
+        return tone(result.proto)
     }
 
     private func tone(_ proto: PrinterProtocol) -> Color {

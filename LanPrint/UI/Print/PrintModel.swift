@@ -134,11 +134,17 @@ final class PrintJobRunner: ObservableObject {
         if text.contains("文档格式") || text.contains("不支持该文档") {
             return "打印机可能不支持当前格式，试试把格式改成「光栅 PCL」。"
         }
+        if text.contains("电脑桥接") {
+            return "如果打印机是连在电脑上的（例如 HP LaserJet 1020），请编辑打印机，把格式改成「电脑桥接直传」，并确认电脑上的桥接程序正在运行。"
+        }
         if text.contains("LPD") || text.contains("队列") {
             return "检查 LPR 队列名（一般为 lp）是否正确。"
         }
         if text.contains("IPP") || text.contains("HTTP") {
             return "确认打印机开启了 IPP / AirPrint，端口为 631。"
+        }
+        if text.contains("Broken pipe") || text.contains("关闭了连接") || text.contains("重置") {
+            return "打印机关闭了连接：如果是电脑上安装的打印机，请把格式改成「电脑桥接直传」；直连打印机则试着改选「光栅 PCL」。"
         }
         return "确认地址、端口和协议与打印机一致，可先用「测试连接」检查。"
     }

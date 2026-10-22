@@ -137,6 +137,7 @@ struct SmallTonalButton: View {
                 font: AuroraFont.labelMedium,
                 expands: expands
             )
+            .padding(.horizontal, expands ? 0 : 14)
             .foregroundStyle(Aurora.onBrandContainer)
             .background(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
