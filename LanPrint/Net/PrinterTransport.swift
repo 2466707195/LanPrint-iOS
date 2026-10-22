@@ -277,6 +277,8 @@ enum PrintTransport {
             name: "document-format",
             value: printer.format.mimeType
         )
+        // copies 属于 Job Attributes 组（0x02），不能放在 Operation 组里。
+        body.jobAttributes()
         body.attributeInteger(name: "copies", value: Int32(max(1, copies)))
         body.endAttributes()
         body.raw(payload)
@@ -372,6 +374,10 @@ private struct IPPBuilder {
 
     mutating func operationAttributes() {
         byte(0x01)
+    }
+
+    mutating func jobAttributes() {
+        byte(0x02)
     }
 
     mutating func attributeText(tag: UInt8, name: String, value: String) {

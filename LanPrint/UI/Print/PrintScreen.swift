@@ -509,7 +509,7 @@ struct PrintScreen: View {
     // MARK: - 小工具
 
     private var allowedTypes: [UTType] {
-        var types: [UTType] = [.pdf, .image, .plainText, .text, .commaSeparatedText, .json, .html]
+        var types: [UTType] = [.pdf, .image, .plainText, .commaSeparatedText, .json, .html]
         if let markdown = UTType(filenameExtension: "md") {
             types.append(markdown)
         }
